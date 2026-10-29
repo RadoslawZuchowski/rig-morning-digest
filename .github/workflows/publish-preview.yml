@@ -1,0 +1,68 @@
+name: Publish digest preview
+
+on:
+  workflow_dispatch:
+    inputs:
+      lane_marker:
+        description: Lane marker for the review copy; leave blank to publish the clean version
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Check out the app source
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12
+
+      - name: Install dependencies
+        run: pnpm install --lockfile=false
+
+      - name: Prepare single-page site
+        env:
+          LANE_MARKER: ${{ inputs.lane_marker }}
+        run: |
+          mkdir site
+          pnpm exec tsx -e "import { createApp } from './src/app.tsx'; void (async () => { const response = await createApp().request('/digest/2026-10-28'); if (!response.ok) process.exit(1); process.stdout.write(await response.text()); })();" > site/index.html
+          test -s site/index.html
+          grep -qi '<!doctype html' site/index.html
+          grep -q 'digest · 2026-10-28' site/index.html
+          if [ -n "$LANE_MARKER" ]; then
+            grep -Fq "$LANE_MARKER" site/index.html
+          else
+            grep -q 'no marker set' site/index.html
+          fi
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
